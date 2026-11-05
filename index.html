@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="en" class="js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#090916">
+<title>Nexora — There is another way</title>
+<meta name="description" content="Nexora: intelligence that transforms the way you imagine, create, and build. A real-time WebGL hero experience.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+<!--
+  ════════════════════════════════════════════════════════════════════════════
+  NEXORA — immersive AI hero (Three.js + GSAP ScrollTrigger, no build step)
+
+  RUN IT
+    Open index.html directly, or serve the folder:  python3 -m http.server 8080
+
+  WHERE TO CUSTOMISE (search for these markers)
+    [TEXT]      copy lives in the HTML below (nav, headline, descriptions)
+    [COLORS]    CSS variables in :root  +  CONFIG.colors in the script
+    [OBJECT]    CONFIG.blob  (silhouette, lobes, stretch, detail, seed)
+    [FRAGMENTS] FRAGMENT_SPECS + CONFIG.fragments (crystal shards)
+    [SPEED]     CONFIG.speed (ambient motion)  +  CONFIG.scroll (scroll length / smoothing)
+    [BLOOM]     CONFIG.bloom
+    [TIMELINE]  buildScrollTimeline() — every scroll beat, in one place
+  ════════════════════════════════════════════════════════════════════════════
+-->
+
+<style>
+  /* [COLORS] — editorial palette. Keep --bg in sync with CONFIG.colors.bg. */
+  :root{
+    --bg:#090916;
+    --ink:#ece9ff;
+    --mute:rgba(236,233,255,.58);
+    --faint:rgba(236,233,255,.34);
+    --line:rgba(176,164,255,.085);
+    --violet:#9b82ff;
+    --serif:'Instrument Serif','Cormorant Garamond','Iowan Old Style','Palatino Linotype',Georgia,serif;
+    --sans:'Inter','Helvetica Neue',Helvetica,Arial,system-ui,sans-serif;
+    --gutter:clamp(18px,3.2vw,48px);
+    --vh:100svh;
+  }
+  @supports not (height:100svh){ :root{ --vh:100vh; } }
+
+  *,*::before,*::after{ box-sizing:border-box; }
+  html{ background:var(--bg); scroll-behavior:auto; -webkit-text-size-adjust:100%; }
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); -webkit-font-smoothing:antialiased;
+    overflow-x:clip; overscroll-behavior-y:none;
+  }
+  a{ color:inherit; text-decoration:none; }
+  :focus-visible{ outline:1px solid var(--violet); outline-offset:4px; border-radius:2px; }
+
+  /* ───────── WebGL canvas (fixed, never causes layout shift) ───────── */
+  #gl{ position:fixed; inset:0; width:100%; height:var(--vh); display:block; z-index:0; background:var(--bg); }
+
+  /* fine editorial grid — 12 columns desktop, 4 on mobile */
+  .grid{
+    position:fixed; inset:0; height:var(--vh); z-index:1; pointer-events:none;
+    margin:0 var(--gutter);
+    background:
+      repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px calc(100%/12));
+    -webkit-mask-image:linear-gradient(#000 0,#000 60%,transparent);
+            mask-image:linear-gradient(#000 0,#000 60%,transparent);
+  }
+  .grid::after{ content:''; position:absolute; top:0; bottom:0; right:0; width:1px; background:var(--line); }
+
+  /* ───────── Navigation ───────── */
+  .nav{
+    position:fixed; z-index:20; top:0; left:0; right:0;
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center;
+    padding:calc(18px + env(safe-area-inset-top)) var(--gutter) 18px;
+    font-size:11px; letter-spacing:.16em; text-transform:uppercase; font-weight:500;
+  }
+  .nav a{ color:var(--mute); transition:color .3s; }
+  .nav a:hover{ color:var(--ink); }
+  .brand{ color:var(--ink)!important; letter-spacing:.3em; font-weight:500; }
+  .nav-links{ display:flex; gap:clamp(18px,3vw,44px); }
+  .nav-right{ display:flex; justify-content:flex-end; align-items:center; gap:clamp(14px,2vw,28px); }
+  .pill{
+    border:1px solid rgba(236,233,255,.28); border-radius:999px; padding:8px 14px 7px;
+    color:var(--ink)!important; transition:background .3s,border-color .3s;
+  }
+  .pill:hover{ background:rgba(155,130,255,.16); border-color:rgba(155,130,255,.6); }
+
+  /* ───────── Story: the pinned stage (hero → next section) ───────── */
+  #story{ position:relative; z-index:2; height:var(--vh); width:100%; overflow:hidden; }
+
+  .label{
+    position:absolute; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint);
+    font-variant-numeric:tabular-nums;
+  }
+  .label b{ color:var(--mute); font-weight:500; }
+  .label.tl{ left:var(--gutter); top:calc(84px + env(safe-area-inset-top)); }
+  .label.bl{ left:var(--gutter); bottom:calc(26px + env(safe-area-inset-bottom)); }
+  .label.br{ right:var(--gutter); bottom:calc(26px + env(safe-area-inset-bottom)); text-align:right; }
+
+  .copy{ position:absolute; left:var(--gutter); bottom:clamp(92px,17svh,190px); width:min(560px,44vw); }
+  .copy h1,.copy h2{
+    margin:0; font-family:var(--serif); font-weight:400;
+    font-size:clamp(2.5rem,4.5vw,5rem); line-height:.98; letter-spacing:-.022em; color:var(--ink);
+  }
+  .copy em{ font-style:italic; color:#d9d0ff; }
+  .line{ display:block; overflow:hidden; padding:.04em 0 .1em; margin-bottom:-.08em; }
+  .line > span{ display:block; will-change:transform; }
+  .desc{ margin:clamp(16px,2.4vh,28px) 0 0; max-width:31ch; font-size:clamp(13px,1.05vw,15px); line-height:1.6; color:var(--mute); }
+  .cta{
+    display:inline-flex; gap:.7em; align-items:center; margin-top:clamp(20px,3.4vh,36px);
+    font-size:11px; letter-spacing:.18em; text-transform:uppercase; font-weight:500; color:var(--ink);
+    padding-bottom:7px; border-bottom:1px solid rgba(236,233,255,.4); transition:border-color .3s, gap .3s;
+  }
+  .cta:hover{ border-color:var(--violet); gap:1.1em; }
+  .cta i{ font-style:normal; color:var(--violet); }
+
+  /* second section copy sits in the same slot as the hero copy */
+  .next{ pointer-events:none; }
+  .next .label{ position:static; display:block; margin-bottom:22px; }
+  .next .desc{ clip-path:inset(0 100% 0 0); }
+
+  .hint{
+    position:absolute; left:50%; bottom:calc(22px + env(safe-area-inset-bottom)); transform:translateX(-50%);
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    font-size:9px; letter-spacing:.3em; text-transform:uppercase; color:var(--faint);
+  }
+  .hint::after{
+    content:''; width:1px; height:34px; background:linear-gradient(var(--violet),transparent);
+    transform-origin:top; animation:hint 2.4s cubic-bezier(.6,0,.2,1) infinite;
+  }
+  @keyframes hint{ 0%{transform:scaleY(0)} 50%{transform:scaleY(1)} 100%{transform:scaleY(1);opacity:0} }
+
+  /* Initial hidden states — only when JS is running (class "js" on <html>). */
+  .js .nav, .js .label.tl, .js .label.bl, .js .label.br, .js .hero .desc, .js .hero .cta, .js .hint{ opacity:0; }
+  .js .line > span{ transform:translateY(112%); }   /* replaced by gsap.set(yPercent) once GSAP boots */
+  .js .next{ visibility:hidden; }
+
+  /* ───────── Coda (end of page) ───────── */
+  .coda{
+    position:relative; z-index:3; min-height:var(--vh); display:flex; flex-direction:column; justify-content:flex-end;
+    padding:0 var(--gutter) calc(28px + env(safe-area-inset-bottom));
+    background:linear-gradient(to bottom, rgba(7,7,18,0) 0%, #070712 55%);
+  }
+  .coda p{ font-family:var(--serif); font-size:clamp(1.6rem,3vw,3rem); line-height:1.05; margin:0 0 36px; max-width:18ch; color:var(--ink); }
+  .coda footer{ display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); border-top:1px solid var(--line); padding-top:18px; }
+
+  /* ───────── Fallback when WebGL is unavailable ───────── */
+  .fallback{ display:none; position:fixed; z-index:0; right:12vw; top:calc(var(--vh)*.26); width:min(38vw,420px); aspect-ratio:1.2; }
+  .no-webgl #gl{ display:none; }
+  .no-webgl .fallback{
+    display:block; border-radius:58% 42% 55% 45% / 48% 58% 42% 52%;
+    background:radial-gradient(circle at 30% 30%, #5b3df0, #1a0b52 60%, #0b0624);
+    box-shadow:0 0 0 2px #e8e0ff, 0 0 40px 6px rgba(130,100,255,.7), inset 0 0 60px rgba(60,100,255,.35);
+    animation:morph 12s ease-in-out infinite alternate;
+  }
+  @keyframes morph{ to{ border-radius:44% 56% 42% 58% / 58% 42% 56% 44%; transform:rotate(14deg) scale(1.06); } }
+
+  /* ───────── Responsive ───────── */
+  @media (max-width:1100px){
+    .copy{ width:min(520px,56vw); }
+  }
+  @media (max-aspect-ratio:19/20), (max-width:720px){
+    /* stacked: copy on top, 3D object beneath */
+    .copy{ top:calc(116px + env(safe-area-inset-top)); bottom:auto; width:auto; right:var(--gutter); }
+    .copy h1,.copy h2{ font-size:clamp(2.4rem,11.5vw,4.4rem); }
+    .desc{ max-width:34ch; }
+    .label.tl{ top:calc(70px + env(safe-area-inset-top)); }
+    .label.br{ display:none; }
+    .label.bl{ bottom:calc(26px + env(safe-area-inset-bottom)); }
+    .hint{ left:auto; right:var(--gutter); transform:none; }
+    .grid{ background:repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 25%); }
+  }
+  @media (max-width:720px){
+    .nav{ grid-template-columns:1fr auto; }
+    .nav-links, .nav-right > a:not(.pill){ display:none; }
+    .fallback{ right:8vw; width:70vw; top:calc(var(--vh)*.5); }
+  }
+  @media (hover:none){ .cta:hover{ gap:.7em; } }
+
+  @media (prefers-reduced-motion:reduce){
+    .hint::after{ animation:none; }
+    .no-webgl .fallback{ animation:none; }
+  }
+</style>
+<noscript><style>.js .nav,.js .label,.js .desc,.js .cta,.js .hint{opacity:1!important}.js .line>span{transform:none!important}</style></noscript>
+
+<!-- Three.js is imported as ES modules from a CDN; GSAP is loaded as classic scripts. -->
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+</head>
+
+<body>
+  <canvas id="gl" aria-hidden="true"></canvas>
+  <div class="fallback" aria-hidden="true"></div>
+  <div class="grid" aria-hidden="true"></div>
+
+  <!-- [TEXT] Navigation -->
+  <header class="nav">
+    <a class="brand" href="#top" aria-label="Nexora home">Nexora</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#platform">Platform</a>
+      <a href="#research">Research</a>
+      <a href="#about">About</a>
+    </nav>
+    <div class="nav-right">
+      <a href="#contact">Contact</a>
+      <a class="pill" href="#access">Request access</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section id="story" aria-label="Introduction">
+      <span class="label tl"><b>(01)</b> &nbsp;Latent form</span>
+      <span class="label bl">Real-time intelligence membrane</span>
+      <span class="label br" id="coords" aria-hidden="true">X 0.00 · Y 0.00 · Z 7.00</span>
+
+      <!-- [TEXT] Hero copy -->
+      <div class="copy hero">
+        <h1 aria-label="There is another way.">
+          <span class="line"><span>There is</span></span>
+          <span class="line"><span><em>another</em> way.</span></span>
+        </h1>
+        <p class="desc">Intelligence that transforms the way you imagine, create, and build.</p>
+        <a class="cta" id="cta" href="#feature">Explore the system <i>↗</i></a>
+      </div>
+
+      <!-- [TEXT] Next section copy (revealed by the scroll timeline) -->
+      <div class="copy next" id="feature">
+        <span class="label"><b>(02)</b> &nbsp;System</span>
+        <h2 aria-label="Beyond the expected.">
+          <span class="line"><span>Beyond the</span></span>
+          <span class="line"><span><em>expected.</em></span></span>
+        </h2>
+        <p class="desc">Explore a new system for turning complex ideas into meaningful outcomes.</p>
+      </div>
+
+      <div class="hint" aria-hidden="true">Scroll</div>
+    </section>
+
+    <section class="coda" id="coda">
+      <p>Built to be explored, not explained.</p>
+      <footer><span>Nexora</span><span>Prototype — 2026</span><span>All systems nominal</span></footer>
+    </section>
+  </main>
+
+<script type="module">
+/* ══════════════════════════════════════════════════════════════════════════
+   CONFIG — the main customisation surface
+   ══════════════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  speed: 1,                       // [SPEED] global ambient-motion multiplier (0.5 = calmer, 1.5 = livelier)
+
+  colors: {                       // [COLORS] (hex, sRGB)
+    bg:        '#090916',         // midnight navy (start)
+    bgScrolled:'#0e1631',         // slightly lighter blue-black (end of scroll)
+    deep:      '#0d0535',         // membrane interior, dark
+    mid:       '#3b1fb4',         // membrane interior, lit
+    glow:      '#7d5cff',         // electric violet outline
+    blue:      '#2f6bff',         // inner blue light
+    rim:       '#f1ecff',         // white-violet hot edge
+    spark:     '#d6caff'          // particles
+  },
+
+  blob: {                         // [OBJECT] hero membrane
+    detail:    { high: 48, low: 26 },   // icosphere subdivisions (smoothness of silhouette)
+    seed:      3.7,                     // change for a different silhouette
+    amp:       1.0,                     // overall wobble amount
+    stretch:   [1.18, 0.92, 0.72],       // squash/stretch on x,y,z → flatter, more membrane-like
+    lobe:      [-0.9, -0.55, 0.05],     // direction the "tendril" bulges toward
+    lobeAmt:   1.05                     // tendril strength
+  },
+  blobB: {                        // [OBJECT] second, more crystalline form (feature section)
+    detail:    { high: 7, low: 5 },
+    seed:      11.2,
+    amp:       0.8,
+    stretch:   [1.0, 1.25, 0.85],
+    lobe:      [0.7, 0.6, -0.2],
+    lobeAmt:   0.35
+  },
+
+  fragments: { desktop: 11, tablet: 8, mobile: 6 },              // [FRAGMENTS] count per breakpoint
+  particles: { sparks: { high: 820, low: 320 }, dust: { high: 520, low: 190 } },
+  bloom:     { strength: 0.5, radius: 0.36, threshold: 0.88, lowStrength: 0.34 },   // [BLOOM] keep restrained
+  scroll:    { vhHigh: 520, vhLow: 430, scrub: 0.9 },            // [TIMELINE] scroll length (% of viewport height) and smoothing (s)
+  camera:    { fov: 32, z: 7, dolly: 1.7, pull: 1.5 }           // z-travel toward object, then pull-back
+};
+
+/* [FRAGMENTS] hand-art-directed shards. x,y,z are offsets from the hero centre (world units).
+   type: 0 shard · 1 chunk · 2 slab · 3 prism.   size: radius.   Add/remove rows freely. */
+const FRAGMENT_SPECS = [
+  // type, size,   x,    y,    z
+  [0, 0.34, -2.35,  1.30, -0.9],
+  [1, 0.36,  1.60,  1.05,  0.2],
+  [2, 0.46,  1.75, -1.45,  1.4],
+  [1, 0.22, -1.25, -1.20, -1.6],
+  [0, 0.40, -2.00,  0.35,  1.5],
+  [3, 0.27,  0.15,  1.75, -2.3],
+  [2, 0.20,  2.95, -0.25, -1.2],
+  [0, 0.19, -0.35, -1.80,  0.8],
+  [1, 0.15,  1.05,  0.85,  2.5],
+  [3, 0.40, -2.70, -0.95, -2.8],
+  [2, 0.14,  2.60,  0.55,  1.9],
+  [0, 0.25,  0.95, -0.40, -2.1]
+];
+
+const prefersReduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const coarsePointer  = matchMedia('(pointer: coarse)').matches;
+const $ = (s, el = document) => el.querySelector(s);
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+/* Timeline state. The ScrollTrigger timeline scrubs these numbers; the render loop only *reads* them,
+   so the 3D scene is always a pure function of scroll position (fully reversible). */
+const S = { dolly: 0, morph: 0, energy: 0, orbit: 0, bg: 0, drift: 0, pull: 0, compose: 0, formB: 0 };
+/* Intro state (phase 01), driven by a one-shot time-based timeline. */
+const I = { reveal: 0, outline: 0, cam: 1, frag: Array(12).fill(0), ui: 0 };
+
+const root = document.documentElement;
+if (!window.gsap || !window.ScrollTrigger) { root.classList.remove('js'); console.warn('GSAP failed to load'); }
+else gsap.registerPlugin(ScrollTrigger);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   WebGL scene (Three.js). Wrapped so a CDN/WebGL failure still leaves a usable page.
+   ══════════════════════════════════════════════════════════════════════════ */
+async function initScene() {
+  const THREE = await import('three');
+  const [{ EffectComposer }, { RenderPass }, { UnrealBloomPass }, { OutputPass }, { mergeVertices }] = await Promise.all([
+    import('three/addons/postprocessing/EffectComposer.js'),
+    import('three/addons/postprocessing/RenderPass.js'),
+    import('three/addons/postprocessing/UnrealBloomPass.js'),
+    import('three/addons/postprocessing/OutputPass.js'),
+    import('three/addons/utils/BufferGeometryUtils.js')
+  ]);
+
+  const canvas = $('#gl');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, stencil: false, powerPreference: 'high-performance' });
+  if (!renderer.capabilities.isWebGL2) throw new Error('WebGL2 required');
+  renderer.setClearColor(CONFIG.colors.bg, 1);
+
+  /* ---------- quality tiers ---------- */
+  const mqLow = () => innerWidth < 760 || (coarsePointer && innerWidth < 1100);
+  let LOW = mqLow();
+  const maxPR = () => Math.min(devicePixelRatio || 1, LOW ? 1.5 : 2);
+  let pr = maxPR(); const minPR = 0.75;
+
+  const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, 1, 0.1, 60);
+  const scene = new THREE.Scene();
+  const col = Object.fromEntries(Object.entries(CONFIG.colors).map(([k, v]) => [k, new THREE.Color(v)]));
+
+  const U = { time: { value: 0 } };                 // shared clock uniform
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(CONFIG.camera.fov / 2));
+
+  /* ---------- GLSL: simplex noise (Ashima / Stefan Gustavson, MIT) ---------- */
+  const NOISE = /* glsl */`
+  vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;}
+  vec4 mod289(vec4 x){return x-floor(x*(1./289.))*289.;}
+  vec4 permute(vec4 x){return mod289(((x*34.)+1.)*x);}
+  vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+  float snoise(vec3 v){
+    const vec2 C=vec2(1./6.,1./3.); const vec4 D=vec4(0.,.5,1.,2.);
+    vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+    vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+    vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+    i=mod289(i);
+    vec4 p=permute(permute(permute(i.z+vec4(0.,i1.z,i2.z,1.))+i.y+vec4(0.,i1.y,i2.y,1.))+i.x+vec4(0.,i1.x,i2.x,1.));
+    float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+    vec4 j=p-49.*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.*x_);
+    vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.-abs(x)-abs(y);
+    vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+    vec4 s0=floor(b0)*2.+1.; vec4 s1=floor(b1)*2.+1.; vec4 sh=-step(h,vec4(0.));
+    vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+    vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+    vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+    p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
+    vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.); m=m*m;
+    return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+  }`;
+  const defs = () => (LOW ? { LOW: '' } : {});
+
+  /* ══════════════════════════════════════════════════════════════════════
+     Atmosphere: full-screen shader — midnight gradient, violet pool of light
+     behind each form, faint volumetric shafts, vignette and film grain.
+     ══════════════════════════════════════════════════════════════════════ */
+  const bgU = {
+    uTime: U.time, uRes: { value: new THREE.Vector2(1, 1) },
+    uBg0: { value: col.bg }, uBg1: { value: new THREE.Color(CONFIG.colors.bgScrolled) },
+    uViolet: { value: col.glow }, uBlue: { value: col.blue },
+    uMix: { value: 0 }, uA: { value: new THREE.Vector2() }, uB: { value: new THREE.Vector2() },
+    uAI: { value: 0 }, uBI: { value: 0 }, uShaft: { value: 0 }
+  };
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+    uniforms: bgU, depthTest: false, depthWrite: false, defines: defs(),
+    vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,1.,1.); }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime,uMix,uAI,uBI,uShaft; uniform vec2 uRes,uA,uB;
+      uniform vec3 uBg0,uBg1,uViolet,uBlue; varying vec2 vUv;
+      ${NOISE}
+      float hash(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }
+      void main(){
+        float asp=uRes.x/uRes.y; vec2 p=(vUv*2.-1.)*vec2(asp,1.);
+        vec3 c=mix(uBg0,uBg1,uMix);
+        c+=uBlue*0.018*smoothstep(1.,-1.,p.y);                       // faint floor haze
+        c+=uViolet*0.10*pow(smoothstep(1.35,0.,length(p-uA)),2.)*uAI;   // light pooled behind hero form
+        c+=uViolet*0.08*pow(smoothstep(1.2,0.,length(p-uB)),2.)*uBI;    // …and behind form B
+        // volumetric-style shafts raking from the upper right
+        vec2 o=vec2(1.15*asp,1.5); vec2 d=p-o; float ang=atan(d.y,d.x);
+        #ifdef LOW
+          float rays=snoise(vec3(ang*5.,uTime*0.03,1.))*.5+.5;
+        #else
+          float rays=snoise(vec3(ang*5.,uTime*0.03,1.))*.5+.25*snoise(vec3(ang*13.,uTime*0.05,4.))+.5;
+        #endif
+        float beam=smoothstep(.5,1.,rays)*smoothstep(3.4,.2,length(d));
+        c+=mix(uBlue,uViolet,.4)*beam*(0.035+0.035*uShaft);
+        c*=1.-0.55*dot(p*.5,p*.5);                                    // vignette
+        c+=(hash(gl_FragCoord.xy+fract(uTime)*60.)-.5)*0.006;         // grain
+        gl_FragColor=vec4(c,1.);
+      }`
+  }));
+  bg.frustumCulled = false; bg.renderOrder = -10; scene.add(bg);
+
+  /* ══════════════════════════════════════════════════════════════════════
+     Organic membrane — procedural displacement on a welded icosphere.
+     One vertex shader does the shape + analytic normals (finite differences
+     on the displacement function); the fragment shader does Fresnel outline,
+     inner light, travelling energy and the dissolve reveal.
+     ══════════════════════════════════════════════════════════════════════ */
+  const blobVS = /* glsl */`
+    uniform float uTime,uSeed,uAmp,uMorph,uScaleMul,uLobeAmt; uniform vec3 uStretch,uLobe; uniform vec2 uPtr;
+    varying vec3 vN,vV,vP,vD,vNs;
+    ${NOISE}
+    vec3 shape(vec3 d){
+      float t=uTime; vec3 s=d+vec3(uSeed*1.7,uSeed*.9,-uSeed*1.3);
+      float n1=snoise(s*.8+vec3(t*.05,0.,t*.04));
+      float n2=snoise(s*1.7+vec3(0.,t*.08,3.));
+      float r=1.+uAmp*(.28*n1+.045*n2);
+      #ifndef LOW
+        r+=uAmp*.018*snoise(s*4.2+vec3(t*.12,7.,0.));          // fine, slow surface distortion
+      #endif
+      r+=uLobeAmt*pow(max(dot(d,normalize(uLobe)),0.),9.)*(1.+.25*n2);    // asymmetrical tendril
+      // morph: a second, more complex displacement field blends in with scroll
+      float m1=snoise(s*1.7+11.+t*.06);
+      float mo=.30*m1+.34*pow(max(dot(d,normalize(vec3(-.7,-.5,.3))),0.),5.)+.22*pow(max(dot(d,normalize(vec3(.5,.8,-.2))),0.),4.);
+      #ifndef LOW
+        mo+=.07*snoise(s*3.0-5.-t*.1);
+      #endif
+      r+=uMorph*mo;
+      vec3 p=d*r*uStretch;
+      p.xy+=uPtr*.16*(.5+.5*d.z);                                   // lean toward the pointer
+      return p;
+    }
+    void main(){
+      vec3 d=normalize(position);
+      vec3 tA=normalize(cross(d,abs(d.y)<.98?vec3(0.,1.,0.):vec3(1.,0.,0.))); vec3 tB=cross(d,tA);
+      const float e=.03;
+      vec3 p0=shape(d)*uScaleMul, p1=shape(normalize(d+tA*e))*uScaleMul, p2=shape(normalize(d+tB*e))*uScaleMul;
+      vec3 n=normalize(cross(p1-p0,p2-p0)); if(dot(n,p0)<0.) n=-n;
+      vD=d; vP=p0; vN=normalize(normalMatrix*n); vNs=normalize(normalMatrix*(d/uStretch));
+      vec4 mv=modelViewMatrix*vec4(p0,1.); vV=-mv.xyz; gl_Position=projectionMatrix*mv;
+    }`;
+
+  const blobCoreFS = /* glsl */`
+    uniform float uTime,uSeed,uReveal,uOutline,uEnergy,uFacet,uDim,uMorph;
+    uniform vec3 uDeep,uMid,uGlow,uBlue,uRim;
+    varying vec3 vN,vV,vP,vD,vNs;
+    ${NOISE}
+    void main(){
+      // dissolve reveal — the form emerges from darkness through a noise threshold
+      float dn=snoise(vD*2.2+vec3(4.,1.,2.))*.5+.5;
+      float k=uReveal*1.35-dn*.9-.05; if(k<0.) discard;
+      float dis=1.-smoothstep(0.,.3,k);
+
+      vec3 pv=-vV; vec3 Nf=normalize(cross(dFdx(pv),dFdy(pv)));
+      vec3 N=normalize(mix(normalize(vN),Nf,uFacet)); vec3 V=normalize(vV);
+      float ndv=clamp(dot(N,V),0.,1.);
+      vec3 Ns=normalize(mix(N,normalize(vNs),.45*(1.-uFacet)));   // smoothed normal for the outline
+      float fres=1.-clamp(dot(Ns,V),0.,1.);
+
+      float en=snoise(vD*5.5+vec3(0.,uTime*.22,uSeed));
+      // interior: pseudo-volumetric — noise sampled at two parallax depths along the view ray
+      float dA=snoise(vP*1.1+V*.35+vec3(0.,uTime*.06,0.));
+      float dB=snoise(vP*2.2-V*.7+vec3(uTime*.05,0.,3.));
+      float g=smoothstep(-1.4,1.4,-vP.x*.55+vP.y*.25+dA*.5);
+      vec3 c=mix(uDeep,uMid,g*.42+pow(fres,2.2)*.5);
+      c+=uBlue*(.05+.15*smoothstep(-.3,.9,dB))*pow(ndv,1.8);                // subtle blue light inside
+      c+=uGlow*.10*pow(smoothstep(.35,1.,dA),2.)*ndv;                        // luminous veins
+      #ifndef LOW
+        float st=snoise(vec3(vP.x*3.,vP.y*.35,uTime*.04));
+        c+=uGlow*.09*smoothstep(.3,1.,st)*ndv;                              // soft vertical light streaks
+      #endif
+      // restrained reflections
+      vec3 R=reflect(-V,N);
+      c+=(pow(max(dot(R,normalize(vec3(-.5,.8,.6))),0.),48.)*.5+pow(max(dot(R,normalize(vec3(.7,-.3,.4))),0.),18.)*.16)*vec3(.82,.76,1.);
+
+      // electric outline (Fresnel) with an irregular width + energy pulses travelling the surface
+      float ang=atan(vP.y,vP.x);
+      float pulse=pow(.5+.5*sin(ang*2.-uTime*1.15+en*1.5+vP.z*1.2),5.);
+      float w=.56+en*.07-pulse*.10*uEnergy;
+      float edge=smoothstep(w,w+.2,fres); float hot=smoothstep(w+.18,.97,fres);
+      float inten=1.+pulse*(.35+1.8*uEnergy);
+      vec3 rimC=mix(uGlow*1.5,uRim*1.35,hot);
+      c=mix(c,rimC*inten,edge*uOutline);
+      c+=uRim*hot*hot*.8*uOutline*(1.+uEnergy*pulse);
+      #ifndef LOW
+        c+=uRim*step(.86,snoise(vD*26.+uTime*.2))*edge*.9*uOutline;           // tiny glints on the edge
+      #endif
+      // crystalline form: bright facet edges
+      float fe=smoothstep(.02,.35,length(fwidth(Nf)));
+      c+=mix(uGlow,uRim,.5)*fe*uFacet*.7*uOutline;
+
+      c*=1.-.6*uDim;
+      c+=mix(uGlow,uRim,.35)*dis*dis*1.1;                                          // glow along the dissolve front
+      gl_FragColor=vec4(c,1.);
+    }`;
+
+  const blobHaloFS = /* glsl */`
+    uniform float uTime,uReveal,uOutline,uEnergy,uDim; uniform vec3 uGlow;
+    varying vec3 vN,vV,vP,vD;
+    ${NOISE}
+    void main(){
+      float dn=snoise(vD*2.2+vec3(4.,1.,2.))*.5+.5; if(uReveal*1.35-dn*.9-.05<0.) discard;
+      float n=snoise(vD*4.+vec3(0.,uTime*.2,0.))*.5+.5;
+      vec3 c=uGlow*(.3+.55*n)*uOutline*(1.+uEnergy*1.4)*(1.-.6*uDim);
+      gl_FragColor=vec4(c,1.);
+    }`;
+
+  function blobGeometry(detail) {
+    let g = new THREE.IcosahedronGeometry(1, detail);
+    g.deleteAttribute('normal'); g.deleteAttribute('uv');
+    g = mergeVertices(g, 1e-4);                         // weld → ~6× fewer vertices to displace
+    return g;
+  }
+
+  function makeBlob(cfg) {
+    const detail = LOW ? cfg.detail.low : cfg.detail.high;
+    const geo = blobGeometry(detail);
+    const u = {
+      uTime: U.time, uSeed: { value: cfg.seed }, uAmp: { value: cfg.amp }, uMorph: { value: 0 },
+      uStretch: { value: new THREE.Vector3(...cfg.stretch) }, uLobe: { value: new THREE.Vector3(...cfg.lobe) },
+      uLobeAmt: { value: cfg.lobeAmt }, uPtr: { value: new THREE.Vector2() },
+      uReveal: { value: 0 }, uOutline: { value: 0 }, uEnergy: { value: 0 }, uFacet: { value: cfg.facet ? 1 : 0 }, uDim: { value: 0 },
+      uDeep: { value: col.deep }, uMid: { value: col.mid }, uGlow: { value: col.glow }, uBlue: { value: col.blue }, uRim: { value: col.rim }
+    };
+    const core = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+      uniforms: { ...u, uScaleMul: { value: 1 } }, vertexShader: blobVS, fragmentShader: blobCoreFS, defines: defs()
+    }));
+    // layered transparent shell behind the core: a thin additive halo that crisps up the silhouette
+    const halo = new THREE.Mesh(geo, new THREE.ShaderMaterial({
+      uniforms: { ...u, uScaleMul: { value: 1.05 } }, vertexShader: blobVS, fragmentShader: blobHaloFS, defines: defs(),
+      side: THREE.BackSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    core.frustumCulled = halo.frustumCulled = false;
+    const group = new THREE.Group(); group.add(core, halo); scene.add(group);
+    return { group, u };
+  }
+
+  const heroBlob = makeBlob(CONFIG.blob);
+  const formB = makeBlob({ ...CONFIG.blobB, facet: true });
+  formB.group.visible = false;
+
+  /* ══════════════════════════════════════════════════════════════════════
+     Crystal fragments — dark translucent flat-shaded shards with fine edge lines.
+     Shared geometry per type; one material per fragment (own fade uniform).
+     ══════════════════════════════════════════════════════════════════════ */
+  const hash3 = (x, y, z) => { const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return s - Math.floor(s); };
+  function crystalGeo(type) {
+    const cfg = [
+      { g: new THREE.OctahedronGeometry(1, 0),  s: [0.55, 1.5, 0.5],  j: 0.28 },
+      { g: new THREE.IcosahedronGeometry(1, 1), s: [1, 0.9, 0.85],    j: 0.36 },
+      { g: new THREE.IcosahedronGeometry(1, 0), s: [1.4, 0.5, 1.0],   j: 0.3 },
+      { g: new THREE.DodecahedronGeometry(1, 0),s: [0.65, 1.35, 0.65],j: 0.26 }
+    ][type];
+    const g = cfg.g, pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const k = 1 + (hash3(+x.toFixed(3), +y.toFixed(3), +z.toFixed(3)) - 0.5) * cfg.j * 2;   // same input → same jitter (watertight)
+      pos.setXYZ(i, x * k * cfg.s[0], y * k * cfg.s[1], z * k * cfg.s[2]);
+    }
+    g.computeBoundingSphere();
+    return g;
+  }
+  const crystalGeos = [0, 1, 2, 3].map(crystalGeo);
+  const crystalEdges = crystalGeos.map(g => new THREE.EdgesGeometry(g, 14));
+
+  const fragVS = /* glsl */`varying vec3 vPv; void main(){ vec4 mv=modelViewMatrix*vec4(position,1.); vPv=mv.xyz; gl_Position=projectionMatrix*mv; }`;
+  const fragFS = /* glsl */`
+    uniform float uFade; uniform vec3 uBg,uViolet,uBlue,uRim; varying vec3 vPv;
+    void main(){
+      vec3 fn=normalize(cross(dFdx(vPv),dFdy(vPv))); vec3 V=normalize(-vPv);
+      float ndv=clamp(dot(fn,V),0.,1.);
+      vec3 L1=normalize(vec3(-.6,.7,.5)), L2=normalize(vec3(.8,-.2,-.3));
+      float d1=max(dot(fn,L1),0.), d2=max(dot(fn,L2),0.);
+      vec3 c=vec3(.018,.016,.045)+uViolet*.34*d1*d1+uBlue*.30*d2;
+      vec3 R=reflect(-V,fn); c+=vec3(.75,.72,.95)*pow(max(dot(R,L1),0.),24.)*.7;
+      float fr=pow(1.-ndv,2.5); c+=uRim*fr*.5;
+      c=mix(c,uBg,smoothstep(5.,15.,-vPv.z)*.6);                 // atmospheric depth
+      gl_FragColor=vec4(c,(.82+.18*fr)*uFade);
+    }`;
+  const fragShared = { uBg: { value: col.bg }, uViolet: { value: col.glow }, uBlue: { value: col.blue }, uRim: { value: col.rim } };
+
+  // seeded PRNG so every load composes the same scene
+  let rs = 1337; const rnd = () => (rs = (rs * 16807) % 2147483647) / 2147483647;
+
+  const frags = FRAGMENT_SPECS.map(([type, size, x, y, z], i) => {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { ...fragShared, uFade: { value: 0 } }, vertexShader: fragVS, fragmentShader: fragFS,
+      transparent: true, depthWrite: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1
+    });
+    const mesh = new THREE.Mesh(crystalGeos[type], mat);
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xcfc4ff, transparent: true, opacity: 0, depthWrite: false });
+    mesh.add(new THREE.LineSegments(crystalEdges[type], lineMat));
+    mesh.rotation.set(rnd() * 6, rnd() * 6, rnd() * 6);
+    scene.add(mesh);
+    // composition B: half the shards re-gather around form B, the rest travel with the hero form
+    const toB = i % 3 !== 0, ang = (i / FRAGMENT_SPECS.length) * Math.PI * 2 + rnd() * 0.6, rad = 1.4 + rnd() * 1.5;
+    return {
+      mesh, mat, lineMat, size, type, toB,
+      a: new THREE.Vector3(x, y, z),
+      b: toB ? new THREE.Vector3(Math.cos(ang) * rad * 1.15, Math.sin(ang) * rad * 0.8, (rnd() - 0.5) * 4.2)
+             : new THREE.Vector3(x * 0.75, y * 0.75, z * 0.8),
+      arc: new THREE.Vector3((rnd() - 0.5) * 2, (rnd() - 0.5) * 1.6, (rnd() - 0.5) * 2),
+      spin: new THREE.Vector3((rnd() - 0.5) * 0.35, (rnd() - 0.5) * 0.45, (rnd() - 0.5) * 0.3),
+      dir: rnd() > 0.5 ? 1 : -1, push: 0.25 + rnd() * 0.5, phase: rnd() * 6.28
+    };
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════
+     Particles: sparks hug each form (suspended inside + around, react to the
+     pointer); dust is a sparse far-field volume that gives depth.
+     ══════════════════════════════════════════════════════════════════════ */
+  const spVS = /* glsl */`
+    attribute vec4 aRand; uniform float uTime,uPx,uScale,uInt,uPtrOn; uniform vec3 uCenter,uStretch; uniform vec2 uPtrW;
+    varying float vA,vB;
+    void main(){
+      float t=uTime*aRand.z;
+      vec3 drift=vec3(sin(t+aRand.x*6.283),cos(t*1.3+aRand.x*12.),sin(t*.7+aRand.x*3.))*.07;
+      vec3 p=uCenter+(position*uStretch+drift)*uScale;
+      vec2 d=p.xy-uPtrW; p.xy+=normalize(d+1e-4)*exp(-dot(d,d)*2.2)*.3*uPtrOn;   // gentle repulsion near pointer
+      vec4 mv=viewMatrix*vec4(p,1.); gl_Position=projectionMatrix*mv;
+      gl_PointSize=aRand.y*uPx*(26./-mv.z);
+      vA=aRand.w*(.35+.65*(.5+.5*sin(uTime*aRand.z*2.+aRand.x*20.)))*uInt; vB=aRand.w;
+    }`;
+  const spFS = /* glsl */`
+    uniform vec3 uColA,uColB; varying float vA,vB;
+    void main(){ float r=length(gl_PointCoord-.5)*2.; float a=smoothstep(1.,0.,r); a*=a;
+      gl_FragColor=vec4(mix(uColA,uColB,vB)*a*vA,1.); }`;
+  function makeSparks(n, shell = [0.25, 1.65]) {
+    const pos = new Float32Array(n * 3), rnd4 = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      const th = Math.random() * 6.2832, ph = Math.acos(2 * Math.random() - 1), r = lerp(shell[0], shell[1], Math.pow(Math.random(), 0.72));
+      pos.set([Math.sin(ph) * Math.cos(th) * r, Math.cos(ph) * r, Math.sin(ph) * Math.sin(th) * r], i * 3);
+      rnd4.set([Math.random(), 0.5 + Math.random() * 1.6, 0.25 + Math.random() * 0.9, 0.35 + Math.random() * 0.65], i * 4);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aRand', new THREE.BufferAttribute(rnd4, 4));
+    const u = {
+      uTime: U.time, uPx: { value: pr }, uScale: { value: 1 }, uInt: { value: 0 }, uPtrOn: { value: 1 },
+      uCenter: { value: new THREE.Vector3() }, uStretch: { value: new THREE.Vector3(1.2, 0.9, 0.8) }, uPtrW: { value: new THREE.Vector2(99, 99) },
+      uColA: { value: col.spark.clone().multiplyScalar(.75) }, uColB: { value: col.rim }
+    };
+    const pts = new THREE.Points(g, new THREE.ShaderMaterial({ uniforms: u, vertexShader: spVS, fragmentShader: spFS, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    pts.frustumCulled = false; scene.add(pts);
+    return { pts, u, total: n };
+  }
+  const nSpark = LOW ? CONFIG.particles.sparks.low : CONFIG.particles.sparks.high;
+  const sparksA = makeSparks(nSpark);
+  const sparksB = makeSparks(Math.round(nSpark * 0.4));
+  sparksB.pts.visible = false;
+
+  const dustVS = /* glsl */`
+    attribute vec4 aRand; uniform float uTime,uPx,uInt; uniform vec3 uBox; varying float vA;
+    void main(){
+      vec3 p=position*uBox; p.y=mod(p.y+uBox.y+uTime*aRand.z*.07,2.*uBox.y)-uBox.y; p.x+=sin(uTime*.1*aRand.z+aRand.x*20.)*.25;
+      vec4 mv=viewMatrix*vec4(p,1.); gl_Position=projectionMatrix*mv; gl_PointSize=aRand.y*uPx*(30./-mv.z);
+      vA=aRand.w*uInt*smoothstep(0.,.18,1.-abs(p.y/uBox.y))*(.5+.5*sin(uTime*aRand.z+aRand.x*40.));
+    }`;
+  const dustFS = /* glsl */`uniform vec3 uCol; varying float vA; void main(){ float r=length(gl_PointCoord-.5)*2.; float a=smoothstep(1.,0.,r); gl_FragColor=vec4(uCol*a*a*vA,1.); }`;
+  const nDust = LOW ? CONFIG.particles.dust.low : CONFIG.particles.dust.high;
+  const dust = (() => {
+    const pos = new Float32Array(nDust * 3), r4 = new Float32Array(nDust * 4);
+    for (let i = 0; i < nDust; i++) { pos.set([Math.random() * 2 - 1, Math.random() * 2 - 1, -1 + Math.random() * 0.5 - 0.75 + Math.random() * 1.3], i * 3); r4.set([Math.random(), 0.4 + Math.random() * 1.2, 0.3 + Math.random() * 0.9, 0.3 + Math.random() * 0.7], i * 4); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aRand', new THREE.BufferAttribute(r4, 4));
+    const u = { uTime: U.time, uPx: { value: pr }, uInt: { value: 0 }, uBox: { value: new THREE.Vector3(8, 4.2, 7) }, uCol: { value: col.spark.clone().multiplyScalar(.7) } };
+    const pts = new THREE.Points(g, new THREE.ShaderMaterial({ uniforms: u, vertexShader: dustVS, fragmentShader: dustFS, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    pts.frustumCulled = false; scene.add(pts); return { pts, u };
+  })();
+
+  /* ---------- post-processing: restrained bloom ---------- */
+  const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: LOW ? 2 : 4 });
+  const composer = new EffectComposer(renderer, rt);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), LOW ? CONFIG.bloom.lowStrength : CONFIG.bloom.strength, CONFIG.bloom.radius, CONFIG.bloom.threshold);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+
+  /* ---------- responsive layout (world units at the camera's rest distance) ---------- */
+  let W = 1, H = 1, L = null, fragCount = 0, stacked = false;
+  function computeLayout() {
+    const asp = W / H, hh = tanHalf * CONFIG.camera.z, hw = hh * asp;
+    stacked = asp < 0.95;
+    const tablet = !stacked && innerWidth < 1100;
+    const V = (x, y, z = 0) => new THREE.Vector3(x, y, z);
+    if (stacked) {
+      // copy on top, object beneath: smaller object, lowered centre, flatter fragment cloud
+      const s = clamp(hw * 0.42, 0.3, 0.7);
+      L = {
+        A: { base: [V(0, -hh * 0.3), s], mid: [V(0, -hh * 0.22), s * 1.15], drift: [V(hw * 0.7, hh * 0.92, -1), s * 0.42] },
+        B: [V(0, -hh * 0.28), s * 0.95],
+        sx: clamp(hw / 2.6, 0.3, 1), sy: 0.55, size: 0.55
+      };
+    } else if (tablet) {
+      L = {
+        A: { base: [V(hw * 0.28, -hh * 0.06), 0.8], mid: [V(hw * 0.1, 0), 0.95], drift: [V(hw * 0.6, hh * 0.62, -1), 0.45] },
+        B: [V(hw * 0.28, -hh * 0.18), 0.8], sx: 0.8, sy: 1, size: 0.9
+      };
+    } else {
+      L = {
+        A: { base: [V(hw * 0.42, -hh * 0.04), 0.92], mid: [V(hw * 0.14, 0), 1.08], drift: [V(hw * 0.64, hh * 0.64, -1), 0.5] },
+        B: [V(hw * 0.3, -hh * 0.18), 0.88], sx: 1, sy: 1, size: 1
+      };
+    }
+    fragCount = stacked || innerWidth < 720 ? CONFIG.fragments.mobile : tablet ? CONFIG.fragments.tablet : CONFIG.fragments.desktop;
+    frags.forEach((f, i) => { f.mesh.visible = i < fragCount; });
+  }
+
+  function resize() {
+    W = canvas.clientWidth || innerWidth; H = canvas.clientHeight || innerHeight;
+    const wasLow = LOW; LOW = mqLow();
+    pr = Math.min(pr, maxPR());
+    renderer.setPixelRatio(pr); renderer.setSize(W, H, false);
+    composer.setPixelRatio(pr); composer.setSize(W, H);
+    bloom.strength = LOW ? CONFIG.bloom.lowStrength : CONFIG.bloom.strength;
+    camera.aspect = W / H; camera.updateProjectionMatrix();
+    bgU.uRes.value.set(W, H);
+    [sparksA, sparksB].forEach(s => (s.u.uPx.value = pr)); dust.u.uPx.value = pr;
+    sparksA.pts.geometry.setDrawRange(0, LOW ? Math.min(sparksA.total, CONFIG.particles.sparks.low) : sparksA.total);
+    computeLayout();
+  }
+  new ResizeObserver(resize).observe(canvas);
+  addEventListener('resize', resize);
+
+  /* ---------- pointer (damped) / gentle automatic motion on touch ---------- */
+  const ptr = new THREE.Vector2(), ptrT = new THREE.Vector2(); let ptrActive = false;
+  if (!coarsePointer && !prefersReduced) {
+    addEventListener('pointermove', e => { ptrT.set((e.clientX / innerWidth) * 2 - 1, -((e.clientY / innerHeight) * 2 - 1)); ptrActive = true; }, { passive: true });
+    document.addEventListener('pointerleave', () => { ptrT.set(0, 0); ptrActive = false; });
+  }
+
+  /* ---------- per-frame update ---------- */
+  const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), ndc = new THREE.Vector3();
+  const heroPos = new THREE.Vector3(), bPos = new THREE.Vector3();
+  const coordsEl = $('#coords'); let coordsAcc = 0;
+  const timeScale = prefersReduced ? 0.12 : CONFIG.speed;
+  let clock = 0;
+
+  function update(dt) {
+    clock += dt * timeScale; U.time.value = clock;
+
+    if (coarsePointer || prefersReduced) ptrT.set(Math.sin(clock * 0.31) * 0.55, Math.cos(clock * 0.23) * 0.4);   // touch: automatic drift
+    ptr.lerp(ptrT, 1 - Math.exp(-dt * 3));
+
+    // camera: dolly in (phase 03) → pull back (phase 04); intro drift; pointer parallax
+    const camZ = CONFIG.camera.z - CONFIG.camera.dolly * S.dolly + CONFIG.camera.pull * S.pull + I.cam * 2.4;
+    camera.position.set(ptr.x * 0.5 + Math.sin(clock * 0.13) * 0.12 - I.cam * 0.7, ptr.y * 0.3 + Math.cos(clock * 0.11) * 0.08 + I.cam * 0.35, camZ);
+    camera.lookAt(0, 0, 0);
+    const halfH0 = tanHalf * camZ;
+
+    // ----- hero form -----
+    const A = L.A;
+    heroPos.copy(A.base[0]).lerp(A.mid[0], S.dolly).lerp(A.drift[0], S.drift);
+    let sc = lerp(lerp(A.base[1], A.mid[1], S.dolly), A.drift[1], S.drift) * lerp(0.86, 1, I.reveal) * (1 + 0.014 * Math.sin(clock * 0.6));
+    heroBlob.group.position.copy(heroPos); heroBlob.group.scale.setScalar(sc);
+    heroBlob.group.rotation.set(-ptr.y * 0.16 + 0.05 * Math.sin(clock * 0.1), ptr.x * 0.26 + 0.1 * Math.sin(clock * 0.08) + S.morph * 0.5, 0.06 * Math.sin(clock * 0.07) + S.morph * 0.12);
+    const hu = heroBlob.u;
+    hu.uMorph.value = S.morph; hu.uAmp.value = 1 + 0.25 * S.morph; hu.uEnergy.value = 0.1 + 0.9 * S.energy;
+    hu.uReveal.value = I.reveal; hu.uOutline.value = I.outline; hu.uDim.value = S.drift * 0.5;
+    hu.uPtr.value.set(ptr.x, ptr.y);
+
+    // ----- form B (crystalline) -----
+    const fb = S.formB;
+    formB.group.visible = sparksB.pts.visible = fb > 0.002;
+    if (fb > 0.002) {
+      bPos.copy(L.B[0]); bPos.y -= (1 - fb) * 1.4; bPos.z -= (1 - fb) * 2.2;
+      formB.group.position.copy(bPos); formB.group.scale.setScalar(L.B[1] * (0.35 + 0.65 * fb));
+      formB.group.rotation.set(clock * 0.07 + ptr.y * 0.1, clock * 0.11 + ptr.x * 0.2, 0.3);
+      const bu = formB.u; bu.uReveal.value = fb; bu.uOutline.value = smooth(0.15, 1, fb); bu.uMorph.value = 0.5 * S.energy; bu.uEnergy.value = 0.35;
+      bu.uPtr.value.set(ptr.x * 0.5, ptr.y * 0.5);
+    }
+
+    // ----- particles -----
+    const ptrW = tmp2.set(ptr.x * halfH0 * (W / H), ptr.y * halfH0, 0);
+    const on = (ptrActive || coarsePointer) ? 1 : 0.5;
+    for (const [sp, pos, s, int] of [[sparksA, heroPos, sc, I.outline * (1 - S.drift * 0.45)], [sparksB, bPos, formB.group.scale.x, fb * 0.9]]) {
+      sp.u.uCenter.value.copy(pos); sp.u.uScale.value = s * 0.95; sp.u.uInt.value = int; sp.u.uPtrOn.value = on; sp.u.uPtrW.value.set(ptrW.x, ptrW.y);
+    }
+    sparksA.u.uStretch.value.set(1.25 + 0.15 * S.morph, 0.92, 0.8);
+    dust.u.uInt.value = I.ui * 0.8;
+
+    // ----- fragments: orbit (phase 03) → re-compose around form B (phase 04) -----
+    const spread = L.sx, e = S.compose * S.compose * (3 - 2 * S.compose);
+    const bBase = L.B[0], aEnd = A.drift[0];
+    for (let i = 0; i < fragCount; i++) {
+      const f = frags[i];
+      // A-state: rotate around the hero centre, drifting outward as the camera closes in
+      const ang = S.orbit * f.dir * 1.05 + Math.sin(clock * 0.1 + f.phase) * 0.06;
+      const ca = Math.cos(ang), sa = Math.sin(ang), push = 1 + S.orbit * f.push;
+      const ax = (f.a.x * ca + f.a.z * sa) * push * spread, az = (-f.a.x * sa + f.a.z * ca) * push, ay = f.a.y * push * L.sy;
+      const baseA = tmp.set(lerp(A.base[0].x, A.mid[0].x, S.dolly) + ax, lerp(A.base[0].y, A.mid[0].y, S.dolly) + ay, az);
+      const bc = f.toB ? bBase : aEnd;
+      const bx = bc.x + f.b.x * spread, by = bc.y + f.b.y * L.sy, bz = (f.toB ? 0 : bc.z) + f.b.z;
+      const px = lerp(baseA.x, bx, e) + f.arc.x * Math.sin(Math.PI * e), py = lerp(baseA.y, by, e) + f.arc.y * Math.sin(Math.PI * e);
+      let pz = lerp(baseA.z, bz, e) + f.arc.z * Math.sin(Math.PI * e);
+      pz = Math.min(pz, camZ - 1.8);                                     // never clip through the camera
+      const bob = Math.sin(clock * 0.35 + f.phase) * 0.08, par = 1 + pz * 0.02;
+      f.mesh.position.set(px + ptr.x * 0.06 * pz, py + bob + ptr.y * 0.04 * pz, pz);
+      f.mesh.scale.setScalar(f.size * L.size * lerp(0.55, 1, I.frag[i]) * par);
+      f.mesh.rotation.x += f.spin.x * dt * timeScale; f.mesh.rotation.y += f.spin.y * dt * timeScale; f.mesh.rotation.z += f.spin.z * dt * timeScale;
+      const fade = I.frag[i] * (1 - 0.18 * S.drift * (f.toB ? 0 : 1));
+      f.mat.uniforms.uFade.value = fade; f.lineMat.opacity = 0.34 * fade;
+    }
+
+    // ----- atmosphere -----
+    ndc.copy(heroPos).project(camera); bgU.uA.value.set(ndc.x * (W / H), ndc.y);
+    ndc.copy(bPos).project(camera); bgU.uB.value.set(ndc.x * (W / H), ndc.y);
+    bgU.uMix.value = S.bg; bgU.uAI.value = I.reveal * (1 - 0.55 * S.drift) * (1 + 0.5 * S.energy); bgU.uBI.value = fb; bgU.uShaft.value = S.energy;
+
+    coordsAcc += dt;
+    if (coordsAcc > 0.12) { coordsAcc = 0; coordsEl.textContent = `X ${camera.position.x.toFixed(2)} · Y ${camera.position.y.toFixed(2)} · Z ${camera.position.z.toFixed(2)}`; }
+  }
+
+  /* ---------- render loop: paused when hidden / past the end of the story ---------- */
+  let raf = 0, last = 0, running = true, visible = !document.hidden, acc = 0, nFrames = 0, warm = 0;
+  function frame(now) {
+    raf = requestAnimationFrame(frame);
+    const dt = Math.min((now - last) / 1000 || 0.016, 0.05); last = now;
+    update(dt); composer.render();
+    // adaptive resolution: if the GPU struggles, step the pixel ratio down
+    warm += dt; if (warm > 3) { acc += dt; if (++nFrames >= 90) { if (acc / nFrames > 0.028 && pr > minPR) { pr = Math.max(minPR, pr - 0.25); resize(); } acc = 0; nFrames = 0; } }
+  }
+  function start() { if (!raf && running && visible) { last = performance.now(); raf = requestAnimationFrame(frame); } }
+  function stop() { cancelAnimationFrame(raf); raf = 0; }
+  document.addEventListener('visibilitychange', () => { visible = !document.hidden; visible ? start() : stop(); });
+
+  resize(); update(0.016); composer.render();
+  start();
+  return { setRunning(v) { running = v; v ? start() : stop(); }, canvas, renderer };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Intro (phase 01) — time-based, runs once at load
+   ══════════════════════════════════════════════════════════════════════════ */
+function playIntro(hasGL) {
+  if (!window.gsap) return;
+  const ui = ['.nav', '.label.tl', '.label.bl', '.label.br', '.hint'];
+  if (prefersReduced) {
+    Object.assign(I, { reveal: 1, outline: 1, cam: 0, ui: 1 }); I.frag.fill(1);
+    gsap.set([...ui, '.hero .desc', '.hero .cta'], { opacity: 1 }); gsap.set('.hero .line > span', { yPercent: 0 });
+    return;
+  }
+  const tl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+  if (hasGL) {
+    tl.to(I, { reveal: 1, duration: 3.4, ease: 'power2.inOut' }, 0.35)             // form emerges from darkness
+      .to(I, { outline: 1, duration: 2.6, ease: 'power1.inOut' }, 1.5)             // violet outline ignites
+      .to(I, { cam: 0, duration: 4.5, ease: 'expo.out' }, 0)                        // slow camera settle
+      .to(I, { ui: 1, duration: 3 }, 1);                                            // dust fades in
+    FRAGMENT_SPECS.forEach((_, i) => tl.to(I.frag, { [i]: 1, duration: 2.4, ease: 'power2.inOut' }, 1.1 + i * 0.2 + (i % 3) * 0.15));   // staggered depths
+  } else { Object.assign(I, { reveal: 1, outline: 1, cam: 0, ui: 1 }); }
+  tl.to('.nav', { opacity: 1, duration: 1.4 }, 0.8)
+    .to('.hero .line > span', { yPercent: 0, duration: 1.5, stagger: 0.14, ease: 'power3.out' }, 1.4)
+    .to('.hero .desc', { opacity: 1, duration: 1.2 }, 2.2)
+    .to('.hero .cta', { opacity: 1, duration: 1.2 }, 2.5)
+    .to(['.label.tl', '.label.bl', '.label.br'], { opacity: 1, duration: 1.2, stagger: 0.12 }, 2.4)
+    .to('.hint', { opacity: 1, duration: 1.2 }, 3.2);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Scroll timeline (phases 03 + 04). One pinned stage, one scrubbed timeline.
+   Everything is a function of scroll progress → fully reversible.
+   Timeline length is 10 abstract units; positions below are in those units.
+   ══════════════════════════════════════════════════════════════════════════ */
+let story;
+function buildScrollTimeline(hasGL) {
+  if (!window.gsap) return;
+  const vh = () => (innerWidth < 760 ? CONFIG.scroll.vhLow : CONFIG.scroll.vhHigh) / 100;
+  const tl = gsap.timeline({
+    defaults: { ease: 'none' },
+    scrollTrigger: {
+      trigger: '#story', start: 'top top', end: () => '+=' + Math.round(innerHeight * vh()),
+      pin: true, anticipatePin: 1, scrub: prefersReduced ? true : CONFIG.scroll.scrub, invalidateOnRefresh: true
+    }
+  });
+  story = tl.scrollTrigger;
+
+  // PHASE 03 — dolly in, grow, morph, energy runs the outline, fragments orbit, background lifts
+  tl.to(S, { dolly: 1, duration: 4.8, ease: 'power1.inOut' }, 0)
+    .to(S, { morph: 1, duration: 5, ease: 'power1.inOut' }, 0)
+    .to(S, { energy: 1, duration: 3.4, ease: 'power1.in' }, 0.2)
+    .to(S, { orbit: 1, duration: 5, ease: 'sine.inOut' }, 0)
+    .to(S, { bg: 0.5, duration: 5 }, 0)
+    .to('.hint', { opacity: 0, duration: 0.5 }, 0)
+    .to('.hero', { opacity: 0, y: -46, duration: 1.7, ease: 'power2.in' }, 0.3)
+    .to('.label.tl, .label.bl', { opacity: 0, duration: 1 }, 0.5)
+
+  // PHASE 04 — hero form drifts up and aside, form B arrives, fragments re-compose, copy is unmasked
+    .set('.next', { visibility: 'visible' }, 4.4)
+    .to(S, { drift: 1, duration: 4, ease: 'power2.inOut' }, 4.6)
+    .to(S, { pull: 1, duration: 4.2, ease: 'power2.inOut' }, 4.6)
+    .to(S, { formB: 1, duration: 3.6, ease: 'power2.out' }, 5)
+    .to(S, { compose: 1, duration: 4, ease: 'power2.inOut' }, 4.7)
+    .to(S, { bg: 1, duration: 4.4 }, 4.6)
+    .to(S, { energy: 0.45, duration: 3 }, 6.5)
+    .fromTo('.next .label', { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 1, ease: 'power2.out' }, 5.6)
+    .fromTo('.next .line > span', { yPercent: 112 }, { yPercent: 0, duration: 1.5, stagger: 0.22, ease: 'power3.out' }, 5.9)
+    .fromTo('.next .desc', { clipPath: 'inset(0 100% 0 0)', opacity: 0 }, { clipPath: 'inset(0 0% 0 0)', opacity: 1, duration: 1.7, ease: 'power2.inOut' }, 6.6)
+    .to({}, { duration: 1 }, 9);                        // hold at the end so the composition can breathe
+
+  // CTA scrolls to the feature beat instead of jumping
+  $('#cta').addEventListener('click', e => {
+    e.preventDefault();
+    const t = story.start + (story.end - story.start) * 0.72;
+    scrollTo({ top: t, behavior: prefersReduced ? 'auto' : 'smooth' });
+  });
+  return tl;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Boot
+   ══════════════════════════════════════════════════════════════════════════ */
+// Hidden start state for the masked lines is owned by GSAP (not CSS) so yPercent tweens stay exact.
+if (window.gsap) { document.querySelectorAll('.line > span').forEach(el => (el.style.transform = 'none')); gsap.set('.line > span', { yPercent: 112 }); }
+
+let scene3d = null;
+try { scene3d = await initScene(); }
+catch (err) { console.warn('3D scene unavailable, using fallback:', err); root.classList.add('no-webgl'); }
+
+if (window.gsap) {
+  ScrollTrigger.config({ ignoreMobileResize: true });
+  buildScrollTimeline(!!scene3d);
+
+  // stop rendering once the coda has fully covered the canvas
+  if (scene3d) {
+    ScrollTrigger.create({ trigger: '#coda', start: 'top 5%', onEnter: () => scene3d.setRunning(false), onLeaveBack: () => scene3d.setRunning(true) });
+    gsap.to('#gl', { opacity: 0.15, ease: 'none', scrollTrigger: { trigger: '#coda', start: 'top bottom', end: 'top 15%', scrub: true } });
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => playIntro(!!scene3d)));
+  document.fonts?.ready.then(() => ScrollTrigger.refresh());
+  addEventListener('load', () => ScrollTrigger.refresh());
+}
+</script>
+</body>
+</html>
